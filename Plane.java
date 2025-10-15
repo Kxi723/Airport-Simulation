@@ -5,25 +5,30 @@ public class Plane implements Runnable {
     private final String planeName;
     private final ATC atc;
     
-    private final double fuelLevel;
+    private double fuelLevel;
     private final boolean isEmergency;
     
     private final Random rand = new Random();
     private final int numPassengerDisembark;
     private final int numPassengerEmbark;
+
+    // Ensure if they finish, they release it
+    private final Object refuelLock = new Object();
     
-    // Landing approval status
     private boolean waitingForLanding = false;
     private boolean canLand = false;
     private boolean waitingForTakeOff = false;
     private boolean canTakeOff = false;
+    private boolean waitingForRefueling = false;
+    private boolean refuelingCompleted = false;
     
     public Plane(int id, ATC atc) {
         this.planeName = "Plane-" + id;
         this.atc = atc;
         
+        // Fixed the fifth plane encountered emergency situation
         if (id == 5) {
-            this.fuelLevel = 5.0 + rand.nextDouble() * 5.0;
+            this.fuelLevel = 5.0 + rand.nextDouble() * 5.0; // Low fuel level
             this.isEmergency = true;
 
             System.out.println(planeName + " created with fuel level: " + String.format("%.1f", fuelLevel) + "% \u001B[31m(Emergency)\u001B[0m");
@@ -35,6 +40,7 @@ public class Plane implements Runnable {
             System.out.println(planeName + " created with fuel level: " + String.format("%.1f", fuelLevel) + "%");
         }
         
+        // Random generate passengers
         this.numPassengerDisembark = 30 + rand.nextInt(21);
         this.numPassengerEmbark = 30 + rand.nextInt(21);
     }
@@ -78,6 +84,18 @@ public class Plane implements Runnable {
     public synchronized void approveAndStartTakeOff() {
         canTakeOff = true;
     }
+
+    public synchronized boolean waitingForRefueling() {
+        return waitingForRefueling && !refuelingCompleted;
+    }
+
+    public void refuelingCompleted() {
+        synchronized (refuelLock) {
+            refuelingCompleted = true;
+            fuelLevel = 100.0; // Update fuel level
+            refuelLock.notifyAll();
+        }
+    }
     
     @Override
     public void run() {
@@ -96,18 +114,22 @@ public class Plane implements Runnable {
             }
 
             // third step
-            coastAndDock(assignedGate);
+            coastToGate(assignedGate);
 
-            // fourth step (3 steps concurrent + 1 step)
-            performGroundOperations();
+            // fourth step
+            dockAtGate(assignedGate);
 
             // fifth step
-            undockAndCoast(assignedGate);
+            notifyGroundServices(assignedGate);
+            waitForGroundOperations(assignedGate);
 
             // sixth step
+            undockAndCoast(assignedGate);
+
+            // Eighth step
             requestTakeOff();
 
-            // seventh step
+            // Ninth step
             takeoff();
 
             // For statistical
@@ -163,38 +185,48 @@ public class Plane implements Runnable {
         return atc.assignGateNumber(this);
     }
     
-    private void coastAndDock(Gate gate) throws InterruptedException {
+    private void coastToGate(Gate gate) throws InterruptedException {
         System.out.println(planeName + ": Coasting to Gate-" + gate.getGateNumber() + ".");
         Thread.sleep(1000);
+    }
 
+    private void dockAtGate(Gate gate) throws InterruptedException {
         System.out.println(planeName + ": Docked at Gate-" + gate.getGateNumber() + ".");
         Thread.sleep(500);
     }
-    
-    private void performGroundOperations() throws InterruptedException {
-        Thread disembarkThread = new Thread(new DisembarkPassengers(planeName, numPassengerDisembark));
-        Thread refuelThread = new Thread(new RefuelOperation(planeName, fuelLevel, atc.getAirport().getRefuelingTruck()));
-        Thread cleanThread = new Thread(new CleaningOperation(planeName));
-        
-        disembarkThread.start();
-        refuelThread.start();
-        cleanThread.start();
-        
-        disembarkThread.join();
-        cleanThread.join();
-        refuelThread.join();
-        
-        // Wait disembark then embark
-        Thread embarkThread = new Thread(new EmbarkPassengers(planeName, numPassengerEmbark));
-        embarkThread.start();
-        embarkThread.join();
-    }
 
+    private void notifyGroundServices(Gate gate) {
+        // Notify Gate to start disembark + cleaning
+        gate.openGate(this);
+        
+        // Wait atc assign
+        synchronized (this) {
+            waitingForRefueling = true;
+        }
+
+        atc.requestRefueling(this);
+    }
+    
+    private void waitForGroundOperations(Gate gate) throws InterruptedException { 
+        // Waiting finish disembark & clean & embark
+        while (!gate.operationCompleted()) {
+            Thread.sleep(100);
+        }
+        
+        // Wait until refuel done
+        synchronized (refuelLock) {
+            while (!refuelingCompleted) {
+                refuelLock.wait();
+            }
+        }
+    }
+    
     private void undockAndCoast(Gate gate) throws InterruptedException {
-        // Set gate available
-        gate.release();
         System.out.println(planeName + ": Undocking from Gate-" + gate.getGateNumber() + ".");
         Thread.sleep(500);
+
+        // Set gate available
+        gate.release();
         
         System.out.println(planeName + ": Coasting to runway.");
         Thread.sleep(1000);
