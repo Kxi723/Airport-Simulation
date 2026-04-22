@@ -1,4 +1,3 @@
-package Airport_Simulation;
 import java.util.Random;
 
 public class Plane implements Runnable {

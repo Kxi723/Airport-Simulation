@@ -1,5 +1,3 @@
-package Airport_Simulation;
-
 public class RefuelingTruck {
     private boolean available = true;
     

@@ -1,4 +1,3 @@
-package Airport_Simulation;
 import java.util.*;
 
 public class TP080522 {

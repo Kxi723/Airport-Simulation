@@ -1,5 +1,3 @@
-package Airport_Simulation;
-
 public class Gate {
     private final int gateNumber;
     private boolean isAvailable = true;
